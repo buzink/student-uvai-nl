@@ -300,6 +300,27 @@ def section_heads(content, t, limit=3, width=32):
     return heads[:limit]
 
 
+def simple_md_html(md):
+    """The small Markdown subset of llms.txt (#, >, -, [text](url), paragraphs) as HTML."""
+    def inline(s):
+        s = html.escape(s, quote=False)
+        return re.sub(r'\[([^\]]+)\]\(([^)]+)\)', lambda m: f'<a href="{m.group(2)}">{m.group(1)}</a>', s)
+    out, items, quote = [], [], []
+
+    def flush():
+        if items: out.append('<ul>' + ''.join(f'<li>{x}</li>' for x in items) + '</ul>'); items.clear()
+        if quote: out.append('<blockquote><p>' + '<br>'.join(quote) + '</p></blockquote>'); quote.clear()
+    for line in md.splitlines():
+        if line.startswith('- '): items.append(inline(line[2:])); continue
+        if line.startswith('> '): quote.append(inline(line[2:])); continue
+        flush()
+        m = re.match(r'^(#+) (.*)', line)
+        if m: out.append(f'<h{len(m.group(1))}>{inline(m.group(2))}</h{len(m.group(1))}>')
+        elif line.strip(): out.append(f'<p>{inline(line)}</p>')
+    flush()
+    return '\n'.join(out)
+
+
 def source_line(url, t, varies):
     """Visible line with the official URL on student.uva.nl, so chatbots cite that page instead of this copy."""
     choose = f' ({t["choose"]})' if varies else ''
@@ -560,7 +581,7 @@ class Site:
         txt = f"""# student.uva.nl voor AI-agents / for AI agents
 
 > Informatie voor studenten van de Universiteit van Amsterdam (UvA), van student.uva.nl, als Markdown en simpele HTML.
-> Veel informatie verschilt per opleiding. Kies daarom eerst de opleiding van de student en volg de links vanaf de index van die opleiding.
+> Veel informatie verschilt per opleiding. Kies daarom eerst de opleiding van de student en volg de links vanaf de inhoudsopgave van die opleiding.
 > Information for students of the University of Amsterdam. Much of it differs per programme: choose the student's programme first.
 
 Experimentele versie, gemaakt op {self.date}. Bij twijfel geldt {SOURCE}.
@@ -584,12 +605,18 @@ Experimentele versie, gemaakt op {self.date}. Bij twijfel geldt {SOURCE}.
 """
         open(os.path.join(self.out, 'llms.txt'), 'w').write(txt)
         open(os.path.join(self.out, 'index.md'), 'w').write(txt)
-        idx = (f'<!doctype html><html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
-               f'<title>student.uva.nl voor AI-agents</title><link rel="alternate" type="text/markdown" href="{e(self.base)}/llms.txt"></head>'
-               f'<body style="font:16px/1.5 system-ui,sans-serif;max-width:46rem;margin:2rem auto;padding:0 1rem;background:#fff;color:#222">'
-               f'<h1>student.uva.nl voor AI-agents</h1><p>Zie <a href="{e(self.base)}/llms.txt">llms.txt</a>.</p><ul>'
-               f'<li><a href="{e(self.url("nl/opleidingen/index", "html"))}">Opleidingen</a> · <a href="{e(self.url("nl/index", "html"))}">Onderwerpen</a></li>'
-               f'<li><a href="{e(self.url("en/programmes/index", "html"))}">Programmes</a> · <a href="{e(self.url("en/index", "html"))}">Topics</a></li></ul></body></html>')
+        # Home page: chatbots given the site's main URL start here (they follow links from HTML, not from
+        # llms.txt), so it carries the same guidance, plus a line for students who land here by accident.
+        students = (f'<p style="background:#fdf1f4;border-left:4px solid #bc0031;padding:.75rem 1rem">'
+                    f'<strong>Ben je student?</strong> Deze site is bedoeld voor AI-assistenten. De officiële informatie vind je op '
+                    f'<a href="{SOURCE}/">student.uva.nl</a>.<br><strong>Are you a student?</strong> This site is meant for AI assistants. '
+                    f'You can find the official information on <a href="{SOURCE}/en">student.uva.nl</a>.</p>\n')
+        idx = (f'<!doctype html>\n<html lang="nl">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+               f'<title>student.uva.nl voor AI-agents</title>\n'
+               f'<meta name="description" content="Informatie van student.uva.nl per opleiding, voor AI-agents. Officiële informatie: student.uva.nl.">\n'
+               f'<link rel="alternate" type="text/markdown" href="{e(self.base)}/llms.txt">\n</head>\n'
+               f'<body style="font:16px/1.5 system-ui,sans-serif;max-width:46rem;margin:2rem auto;padding:0 1rem;background:#fff;color:#222">\n'
+               f'{students}{simple_md_html(txt.replace(".md", ".html"))}\n</body>\n</html>\n')
         open(os.path.join(self.out, 'index.html'), 'w').write(idx)
         sm = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' + ''.join(
             f'<url><loc>{html.escape(x)}</loc></url>\n' for x in self.html_urls) + '</urlset>\n'
