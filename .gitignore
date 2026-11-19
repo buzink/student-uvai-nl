@@ -1,0 +1,7 @@
+data/
+site/
+.claude/
+__pycache__/
+.DS_Store
+graft/
+.ignore
