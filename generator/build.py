@@ -18,7 +18,9 @@ CONTENT_KEYS = ['introductionText', 'resolvedCallToActions', 'genericBodyText', 
                 'resolvedVideoImageTexts', 'resolvedQuotes', 'resolvedContacts']
 
 T = {
-    'nl': dict(info='informatie', prog='opleidingen', topics='onderwerpen', other='overig',
+    'nl': dict(toc='alle-paginas', toc_title='Alle pagina\'s', toc_link='Alle pagina\'s op één pagina',
+               toc_intro='Alle informatiepagina\'s voor <strong>{label}</strong> op één pagina, per onderwerp, met de belangrijkste kopjes van elke pagina. De links gaan direct naar de versie voor deze opleiding; "(eigen info)": de pagina heeft voor deze opleiding andere of extra informatie dan de algemene versie. Per onderwerp met beschrijvingen: {index}.',
+               info='informatie', prog='opleidingen', topics='onderwerpen', other='overig',
                site_title='student.uva.nl voor AI-agents',
                programmes='Opleidingen', topics_title='Onderwerpen', general='algemene versie',
                applies='Geldt voor', contact='Contact', step='Stap', more_info='Informatie per opleiding',
@@ -28,10 +30,12 @@ T = {
                study_intro='Alle informatiepagina\'s van student.uva.nl voor <strong>{label}</strong>, per onderwerp. De links gaan direct naar de versie voor deze opleiding.',
                topic_intro='Pagina\'s over {topic} voor <strong>{label}</strong>. Links gaan direct naar de versie voor deze opleiding. "(eigen info)": de pagina heeft voor deze opleiding andere of extra informatie dan de algemene versie.',
                generic_topic_intro='Pagina\'s over {topic} (algemene versies). Informatie verschilt vaak per opleiding: begin voor de juiste versie bij {link}.',
-               prog_intro='Kies de opleiding van de student. Elke opleiding heeft een eigen index met links naar de juiste versie van elke pagina.',
+               prog_intro='Kies de opleiding van de student. Elke opleiding heeft een eigen inhoudsopgave met alle pagina\'s, die direct naar de juiste versie van elke pagina linkt.',
                footer='Experimentele versie, automatisch gemaakt uit {src} op {date}. Bij twijfel geldt student.uva.nl.',
                pages='pagina\'s', with_specific='met opleidingsspecifieke info', source='Bron'),
-    'en': dict(info='information', prog='programmes', topics='topics', other='other',
+    'en': dict(toc='all-pages', toc_title='All pages', toc_link='All pages on one page',
+               toc_intro='All information pages for <strong>{label}</strong> on one page, by topic, with the main headings of each page. Links go straight to the version for this programme; "(own info)": the page has different or additional information for this programme compared to the general version. By topic with descriptions: {index}.',
+               info='information', prog='programmes', topics='topics', other='other',
                site_title='student.uva.nl for AI agents',
                programmes='Programmes', topics_title='Topics', general='general version',
                applies='Applies to', contact='Contact', step='Step', more_info='Information per programme',
@@ -41,7 +45,7 @@ T = {
                study_intro='All information pages of student.uva.nl for <strong>{label}</strong>, by topic. Links go straight to the version for this programme.',
                topic_intro='Pages about {topic} for <strong>{label}</strong>. Links go straight to the version for this programme. "(own info)": the page has different or additional information for this programme compared to the general version.',
                generic_topic_intro='Pages about {topic} (general versions). Information often differs per programme: for the right version, start at {link}.',
-               prog_intro='Choose the student\'s programme. Each programme has its own index that links to the right version of every page.',
+               prog_intro='Choose the student\'s programme. Each programme has its own table of contents with all pages, linking straight to the right version of every page.',
                footer='Experimental version, generated automatically from {src} on {date}. If in doubt, student.uva.nl prevails.',
                pages='pages', with_specific='with programme-specific info', source='Source'),
 }
@@ -285,6 +289,16 @@ def short(desc, limit=80):
     return s[:limit].rsplit(' ', 1)[0].rstrip(',;:') + '…'
 
 
+def section_heads(content, t, limit=3, width=32):
+    """The main (h2) section headings of a page: tells an agent what a page covers without opening it."""
+    heads = []
+    for h in re.findall(r'<h2[^>]*>(.*?)</h2>', content, re.S):
+        h = ws(html.unescape(re.sub(r'<[^>]+>', '', h))).strip()
+        if not h or h == t['contact'] or h in heads: continue
+        heads.append(h if len(h) <= width else h[:width].rsplit(' ', 1)[0] + '…')
+    return heads[:limit]
+
+
 def strip_p(s):
     return re.sub(r'</?p>', ' ', s or '').strip()
 
@@ -344,6 +358,7 @@ class Site:
             d = json.load(open(f))
             if d['page']: self.pages[d['lang']][d['slug']] = d['page']
         self.files = 0; self.bytes = 0; self.html_urls = []
+        self.path_heads = {}  # page path -> its main section headings (for the tables of contents)
         self.tax = Taxonomy(os.path.join(data, 'taxonomy_study_programmes.json'))
 
     # -- urls
@@ -445,6 +460,7 @@ class Site:
             base_path = f'{lang}/{t["info"]}/{slug}'
             target = {}
             variants = []
+            path_heads = self.path_heads
             fallback_count = defaultdict(int)
             # If the page differs per programme, every programme gets a full version file (also those that
             # see only the general content): the general page then shows just the intro and the versions.
@@ -452,13 +468,16 @@ class Site:
             for k, (f, ss) in groups.items():
                 if not varies:
                     for s in ss: target[s] = (base_path, False)
+                    path_heads[base_path] = section_heads(content_html(f, t), t)
                     continue
                 name, vlabel = self.tax.variant_name(ss, fallback_count)
                 vpath = f'{base_path}/{name}'
                 variants.append((vpath, ss))
                 for s in ss: target[s] = (vpath, k != gen_key)
                 labels = ', '.join(studies[s] for s in ss)
-                body = f'<p><strong>{t["applies"]}:</strong> {e(labels)}.</p>\n' + content_html(f, t)
+                chtml = content_html(f, t)
+                path_heads[vpath] = section_heads(chtml, t)
+                body = f'<p><strong>{t["applies"]}:</strong> {e(labels)}.</p>\n' + chtml
                 self.write(lang, vpath, f'{title} – {vlabel or studies[ss[0]] + (f" (+{len(ss) - 1})" if len(ss) > 1 else "")}',
                            body, OrderedDict(meta_base, general_version=self.url(base_path, 'md')), desc)
 
@@ -485,8 +504,8 @@ class Site:
             f'<li><a href="site:{lang}/{t["topics"]}/{ts}">{e(tl)}</a> ({len(generic_by_topic[ts])} {t["pages"]})</li>' for ts, tl in topics.items()) + '</ul>'
         self.write(lang, f'{lang}/index', t['site_title'], idx)
 
-        # programme indexes
-        lst = ''.join(f'<li><a href="site:{lang}/{t["prog"]}/{s}/index">{e(l)}</a></li>' for s, l in studies.items() if by_study[s])
+        # programme indexes: the list links to each programme's table of contents (all pages on one page)
+        lst = ''.join(f'<li><a href="site:{lang}/{t["prog"]}/{s}/{t["toc"]}">{e(l)}</a></li>' for s, l in studies.items() if by_study[s])
         self.write(lang, f'{lang}/{t["prog"]}/index', t['programmes'], f'<p>{t["prog_intro"]}</p>\n<ul>{lst}</ul>')
         for s, label in studies.items():
             entries = by_study[s]
@@ -497,7 +516,18 @@ class Site:
                 f'<li><a href="site:{lang}/{t["prog"]}/{s}/{ts}">{e(tl)}</a> ({len(per_topic[ts])} {t["pages"]}, '
                 f'{sum(x[4] for x in per_topic[ts])} {t["with_specific"]})</li>'
                 for ts, tl in topics.items() if per_topic[ts]) + '</ul>'
+            body = body.replace('</p>\n<ul>', f' <a href="site:{lang}/{t["prog"]}/{s}/{t["toc"]}">{t["toc_link"]}</a>.</p>\n<ul>', 1)
             self.write(lang, f'{lang}/{t["prog"]}/{s}/index', label, body)
+            # table of contents: every page for this programme with its main sections, grouped by topic
+            index_link = f'<a href="site:{lang}/{t["prog"]}/{s}/index">{t["topics_title"]}</a>'
+            toc = f'<p>{t["toc_intro"].format(label=e(label), index=index_link)}</p>\n'
+            for ts, tl in topics.items():
+                if not per_topic[ts]: continue
+                toc += f'<h2>{e(tl)}</h2>\n<ul>' + ''.join(
+                    f'<li><a href="site:{path}">{e(title)}</a>{" (" + t["specific"] + ")" if spec else ""}'
+                    f'{": " + e("; ".join(path_heads.get(path, []))) if path_heads.get(path) else ""}</li>'
+                    for sub, title, desc, path, spec in sorted(per_topic[ts], key=lambda x: x[1].lower())) + '</ul>\n'
+            self.write(lang, f'{lang}/{t["prog"]}/{s}/{t["toc"]}', f'{label}: {t["toc_title"]}', toc)
             for ts, tl in topics.items():
                 if not per_topic[ts]: continue
                 body = f'<p>{t["topic_intro"].format(topic=e(tl), label=e(label))}</p>\n' + self.page_list(per_topic[ts], t, specific_label=t['specific'])
@@ -529,13 +559,13 @@ Experimentele versie, gemaakt op {self.date}. Bij twijfel geldt {SOURCE}.
 
 ## Nederlands
 
-- [Opleidingen]({u('nl/opleidingen/index')}): kies een opleiding; de index van die opleiding linkt per onderwerp naar de juiste versie van elke pagina.
+- [Opleidingen]({u('nl/opleidingen/index')}): kies een opleiding; je komt op een inhoudsopgave met alle pagina's voor die opleiding (met de belangrijkste kopjes), die direct naar de juiste versie van elke pagina linkt. Rechtstreeks: {self.base}/nl/opleidingen/<codename>/alle-paginas.md.
 - [Onderwerpen]({u('nl/index')}): de algemene versies per onderwerp.
 - Elke pagina bestaat als .md en als .html. Algemene versie: {self.base}/nl/informatie/<slug>.md, met onderaan de links naar de versies per opleiding.
 
 ## English
 
-- [Programmes]({u('en/programmes/index')}): choose a programme; its index links to the right version of every page, by topic.
+- [Programmes]({u('en/programmes/index')}): choose a programme; you get a table of contents with all pages for that programme (with their main headings), linking straight to the right version of every page. Directly: {self.base}/en/programmes/<codename>/all-pages.md.
 - [Topics]({u('en/index')}): the general versions by topic.
 - Every page exists as .md and .html. General version: {self.base}/en/information/<slug>.md, with links to the versions per programme at the end.
 """
