@@ -23,7 +23,7 @@ T = {
                info='informatie', prog='opleidingen', topics='onderwerpen', other='overig',
                site_title='student.uva.nl voor AI-agents',
                programmes='Opleidingen', topics_title='Onderwerpen', general='algemene versie',
-               applies='Geldt voor', contact='Contact', step='Stap', more_info='Informatie per opleiding',
+               applies='Geldt voor', official='Officiële bron', choose='kies daar je opleiding', contact='Contact', step='Stap', more_info='Informatie per opleiding',
                generic_note='De inhoud van deze pagina verschilt per opleiding. Hieronder staat alleen de inleiding; lees de volledige informatie in de versie voor de opleiding van de student (zie "Informatie per opleiding"), of begin bij {link}.',
                only_general='Deze pagina is voor alle opleidingen hetzelfde.',
                specific='eigen info',
@@ -38,7 +38,7 @@ T = {
                info='information', prog='programmes', topics='topics', other='other',
                site_title='student.uva.nl for AI agents',
                programmes='Programmes', topics_title='Topics', general='general version',
-               applies='Applies to', contact='Contact', step='Step', more_info='Information per programme',
+               applies='Applies to', official='Official source', choose='select your programme there', contact='Contact', step='Step', more_info='Information per programme',
                generic_note='The content of this page differs per programme. Below is only the introduction; read the full information in the version for the student\'s programme (see "Information per programme"), or start at {link}.',
                only_general='This page is the same for all programmes.',
                specific='own info',
@@ -112,7 +112,8 @@ class Renderer:
                 href = self.link(attrs.get('href') or '')
                 # Parentheses and spaces would end a Markdown link early (e.g. DataNose URLs).
                 href = href.replace(' ', '%20').replace('(', '%28').replace(')', '%29')
-                s += f'[{inner.strip()}]({href})' if href and inner.strip() else inner
+                if href and inner.strip() == href: s += f'<{href}>'  # bare URL: no need to repeat it
+                else: s += f'[{inner.strip()}]({href})' if href and inner.strip() else inner
             elif tag in ('strong', 'b'):
                 s += wrap(inner, '**')
             elif tag in ('em', 'i'):
@@ -299,6 +300,12 @@ def section_heads(content, t, limit=3, width=32):
     return heads[:limit]
 
 
+def source_line(url, t, varies):
+    """Visible line with the official URL on student.uva.nl, so chatbots cite that page instead of this copy."""
+    choose = f' ({t["choose"]})' if varies else ''
+    return f'<p><strong>{t["official"]}:</strong> <a href="src:{e(url)}">{e(url)}</a>{choose}</p>\n'
+
+
 def strip_p(s):
     return re.sub(r'</?p>', ' ', s or '').strip()
 
@@ -371,6 +378,7 @@ class Site:
         def link(href):
             href = html.unescape(href or '').strip()
             if not href or href.startswith('#'): return ''
+            if href.startswith('src:'): return href[4:]
             if href.startswith('site:'): return self.url(href[5:], ext, frm)
             m = re.match(r'^(?:https?://student\.uva\.nl)?/(?:(en)/information|informatie)/([^?#]+)', href)
             if m:
@@ -477,7 +485,7 @@ class Site:
                 labels = ', '.join(studies[s] for s in ss)
                 chtml = content_html(f, t)
                 path_heads[vpath] = section_heads(chtml, t)
-                body = f'<p><strong>{t["applies"]}:</strong> {e(labels)}.</p>\n' + chtml
+                body = source_line(meta_base['source'], t, True) + f'<p><strong>{t["applies"]}:</strong> {e(labels)}.</p>\n' + chtml
                 self.write(lang, vpath, f'{title} – {vlabel or studies[ss[0]] + (f" (+{len(ss) - 1})" if len(ss) > 1 else "")}',
                            body, OrderedDict(meta_base, general_version=self.url(base_path, 'md')), desc)
 
@@ -486,10 +494,10 @@ class Site:
                 note = t['generic_note'].format(link=f'<a href="{prog_index}">{t["programmes"]}</a>')
                 intro = p.get('introductionText') or desc
                 lst = ''.join(f'<li><a href="site:{vp}">{e(", ".join(studies[s] for s in ss))}</a></li>' for vp, ss in variants)
-                body = (f'<p><em>{note}</em></p>\n' + (f'<p>{e(intro)}</p>\n' if intro else '')
+                body = (source_line(meta_base['source'], t, True) + f'<p><em>{note}</em></p>\n' + (f'<p>{e(intro)}</p>\n' if intro else '')
                         + f'<h2>{t["more_info"]}</h2>\n<ul>{lst}</ul>')
             else:
-                body = f'<p><em>{t["only_general"]}</em></p>\n' + content_html(gen, t)
+                body = source_line(meta_base['source'], t, False) + f'<p><em>{t["only_general"]}</em></p>\n' + content_html(gen, t)
             self.write(lang, base_path, title, body, meta_base, desc)
             generic_by_topic[tslug].append((sub, title, desc, base_path, bool(variants)))
             for s in page_studies:
@@ -556,6 +564,11 @@ class Site:
 > Information for students of the University of Amsterdam. Much of it differs per programme: choose the student's programme first.
 
 Experimentele versie, gemaakt op {self.date}. Bij twijfel geldt {SOURCE}.
+
+## Bronnen / Sources
+
+- Deze site is een kopie van student.uva.nl voor AI-agents. Elke pagina noemt bovenaan de officiële bron op student.uva.nl ("Officiële bron"); verwijs studenten naar die URL, niet naar deze kopie. Verschilt de pagina per opleiding, dan kiest de student op student.uva.nl zijn of haar opleiding.
+- This site is a copy of student.uva.nl for AI agents. Every page states its official source on student.uva.nl at the top ("Official source"); refer students to that URL, not to this copy. If the page differs per programme, the student selects their programme on student.uva.nl.
 
 ## Nederlands
 
